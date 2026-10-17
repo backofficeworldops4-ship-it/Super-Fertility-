@@ -1,0 +1,25 @@
+import type { CaseRecord, CaseStatus } from './types';
+export type ActionKey = 'payment'|'intake'|'qc1-pass'|'qc1-changes'|'psych-consult'|'psych-sign'|'gp-consult'|'gp-sign'|'qc2-pass'|'qc2-changes'|'release'|'rebooking-paid'|'no-show'|'consent';
+export function applyAction(record: CaseRecord, action: ActionKey, actor: string): CaseRecord {
+ const c: CaseRecord = {...record, applicants:record.applicants.map(a=>({...a})),notes:[...record.notes],audit:[...record.audit]};
+ const setStatus=(s:CaseStatus)=>{c.status=s};
+ switch(action){
+ case 'payment': if(c.payment==='Rebooking fee due') throw new Error('This action simulates a rebooking-fee payment, not an initial payment.'); c.payment='Paid (demo)'; setStatus('Intake & consent'); c.notes.push('Initial payment simulated successfully; no real transaction occurred.'); break;
+ case 'intake': c.intakeComplete=true; c.applicants=c.applicants.map(a=>({...a,consent:'Complete'})); setStatus('Report preparation'); c.notes.push('Demo intake and consent marked complete for all applicants.'); break;
+ case 'consent': c.applicants=c.applicants.map(a=>({...a,consent:'Complete'})); c.notes.push('Consent marked complete in demo for each applicant.'); break;
+ case 'qc1-pass': if(!c.intakeComplete||c.applicants.some(a=>a.consent!=='Complete')) throw new Error('QC 1 requires completed intake and consent for every applicant.'); c.qc1='Passed'; setStatus('Psychiatrist consultation'); c.notes.push('QC 1 passed in demo.'); break;
+ case 'qc1-changes': c.qc1='Changes requested'; setStatus('Intake & consent'); c.notes.push('QC 1 requested changes in demo.'); break;
+ case 'psych-consult': if(c.qc1!=='Passed') throw new Error('QC 1 must pass before practitioner progression.'); setStatus('Psychiatrist review'); c.notes.push('Psychiatrist consultation marked complete in demo.'); break;
+ case 'psych-sign': if(c.qc1!=='Passed') throw new Error('QC 1 must pass before report signing.'); if(c.status!=='Psychiatrist review') throw new Error('Complete the psychiatrist consultation before signing the report.'); c.applicants=c.applicants.map(a=>({...a,psychiatristSigned:true,reportExpiry:a.reportExpiry??expiryDate()})); setStatus('GP consultation'); c.notes.push('Psychiatrist report signed in demo; not a legally binding signature.'); break;
+ case 'gp-consult': if(c.applicants.some(a=>!a.psychiatristSigned)) throw new Error('Psychiatrist report must be signed before GP progression.'); setStatus('GP review'); c.notes.push('GP consultation marked complete in demo.'); break;
+ case 'gp-sign': if(c.applicants.some(a=>!a.psychiatristSigned)) throw new Error('Psychiatrist report must be signed before GP report signing.'); if(c.status!=='GP review') throw new Error('Complete the GP consultation before signing the report.'); c.applicants=c.applicants.map(a=>({...a,gpSigned:true,reportExpiry:a.reportExpiry??expiryDate()})); setStatus('QC 2'); c.notes.push('GP report signed in demo; final release still requires QC 2.'); break;
+ case 'qc2-pass': if(c.status!=='QC 2') throw new Error('GP report workflow must be complete before QC 2.'); if(c.applicants.some(a=>!a.psychiatristSigned||!a.gpSigned)) throw new Error('QC 2 requires the required practitioner reports to be signed for every applicant.'); c.qc2='Passed'; setStatus('QC 2'); c.notes.push('QC 2 passed in demo; release is a separate action.'); break;
+ case 'qc2-changes': c.qc2='Changes requested'; setStatus('GP review'); c.notes.push('QC 2 requested changes in demo.'); break;
+ case 'release': if(c.qc2!=='Passed'||c.applicants.some(a=>!a.psychiatristSigned||!a.gpSigned)) throw new Error('Reports cannot be released before QC 2 passes and all required reports are signed.'); setStatus('Released'); c.notes.push('Final reports released to demo patient portal.'); break;
+ case 'rebooking-paid': if(c.status!=='Missed appointment hold'||c.payment!=='Rebooking fee due') throw new Error('No applicable rebooking-fee hold exists.'); c.payment='Paid (demo)'; setStatus('Psychiatrist consultation'); c.notes.push('Rebooking fee simulated as paid; replacement booking unlocked in demo.'); break;
+ case 'no-show': c.payment='Rebooking fee due'; setStatus('Missed appointment hold'); c.notes.push('Appointment marked no-show; rebooking is held pending simulated fee.'); break;
+ }
+ c.audit.push({at:new Date().toLocaleString('en-AU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}),actor,action:action.replaceAll('-',' ')+' (demo)'}); return c;
+}
+function expiryDate(){const d=new Date();d.setMonth(d.getMonth()+6);return d.toISOString().slice(0,10)}
+export function nextAction(status: CaseStatus): ActionKey | null { const m:Partial<Record<CaseStatus,ActionKey>>={'Application':'payment','Payment pending':'payment','Intake & consent':'intake','Report preparation':'qc1-pass','QC 1':'qc1-pass','Psychiatrist consultation':'psych-consult','Psychiatrist review':'psych-sign','GP consultation':'gp-consult','GP review':'gp-sign','QC 2':'qc2-pass','Missed appointment hold':'rebooking-paid'}; return m[status]??null; }
